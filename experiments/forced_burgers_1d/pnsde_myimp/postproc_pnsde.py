@@ -1,0 +1,313 @@
+import torch
+from torch import Tensor
+from torchsde import sdeint
+
+import os
+import pathlib
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import AxesGrid
+import numpy as np
+
+import visde
+from experiments.forced_burgers_1d.visde.def_model import DriftNet, EncodeMeanNet, DecodeMeanNet
+from experiments.forced_burgers_1d.pnsde_myimp.train_pnsde import create_autoencoder, create_pnsde, PNSDEConfig, TestPNSDE
+from datasets.forced_burgers_1d.load_data import load_data
+
+plt.rcParams.update({'font.size': 16})
+#plt.rc('text', usetex=True)
+#plt.rc('font', family='serif')
+
+CURR_DIR = str(pathlib.Path(__file__).parent.absolute())
+TRAIN_VAL_TEST = "test"
+
+if torch.cuda.is_available():
+    device = "cuda:0"
+else:
+    device = "cpu"
+
+def plot_rms_rel_err(traj_dir, rel_err, aenc_rel_err):
+    figrmse, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(rel_err, label="Latent Model")
+    ax.plot(aenc_rel_err, label="Autoencoder")
+    ax.set_xlabel("Time step")
+    ax.set_ylabel("Relative Error")
+    ax.set_title(f"Mean Relative Error: {np.mean(rel_err):.3f}")
+    ax.legend()
+    figrmse.savefig(os.path.join(traj_dir, "error.png"))
+    figrmse.show()
+    plt.close(figrmse)
+
+def plot_latent_state(traj_dir, z_enc, z_int, dim_z):
+    figz, axs_z = plt.subplots(dim_z, 1, figsize=(12, 6*dim_z))
+    z_enc_m = z_enc.mean(1)
+    z_pred = z_int.mean(1)
+    z_std = z_int.std(1)
+    n_tsteps = z_enc.shape[0]
+    for k in range(dim_z):
+        axs_z[k].plot(z_enc_m[:, k], label=f"Encoded true state {k}", linestyle="--", color="blue")
+        axs_z[k].plot(z_pred[:, k], label=f"Latent dynamics {k}", linestyle=":", color="red")
+        axs_z[k].fill_between(np.arange(n_tsteps), z_pred[:, k] - z_std[:, k],
+                                z_pred[:, k] + z_std[:, k], color="red", alpha=0.05)
+        axs_z[k].fill_between(np.arange(n_tsteps), z_pred[:, k] - 2*z_std[:, k],
+                                z_pred[:, k] + 2*z_std[:, k], color="red", alpha=0.05)
+        axs_z[k].fill_between(np.arange(n_tsteps), z_pred[:, k] - 3*z_std[:, k],
+                                z_pred[:, k] + 3*z_std[:, k], color="red", alpha=0.05)
+        axs_z[k].legend()
+        axs_z[k].set_xlabel("Time step")
+        axs_z[k].set_ylabel(f"Latent state {k}")
+    figz.savefig(os.path.join(traj_dir, "latent.png"))
+    figz.show()
+    plt.close(figz)
+
+def plot_pred_state(traj_dir, x_true, x_mean, x_std, dim_x, tsamples, t):
+    figpred = plt.figure(figsize=(8, 2*len(tsamples)))
+    axgrid = AxesGrid(figpred, 111,
+                    nrows_ncols=(len(tsamples), 4),
+                    axes_pad=0.20,
+                    share_all=True,
+                    direction="column"
+                    )
+
+    for j, j_t in enumerate(tsamples):
+        id1 = j
+        id2 = j + len(tsamples)
+        id3 = j + 2*len(tsamples)
+        id4 = j + 3*len(tsamples)
+        
+        axgrid[id1].plot(np.linspace(0, 5, dim_x), x_true[j_t])
+        axgrid[id1].tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, left=False, right=False, labelleft=False)
+        axgrid[id1].set_ylim(-0.2, 5.2)
+        
+        axgrid[id2].plot(np.linspace(0, 5, dim_x), x_mean[j_t])
+        axgrid[id2].tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, left=False, right=False, labelleft=False)
+        axgrid[id2].set_ylim(-0.2, 5.2)
+
+        axgrid[id3].plot(np.linspace(0, 5, dim_x), np.abs(x_mean[j_t] - x_true[j_t]))
+        axgrid[id3].tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, left=False, right=False, labelleft=False)
+        axgrid[id3].set_ylim(-0.2, 5.2)
+
+        axgrid[id4].plot(np.linspace(0, 5, dim_x), x_std[j_t])
+        axgrid[id4].tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, left=False, right=False, labelleft=False)
+        axgrid[id4].set_ylim(-0.2, 5.2)
+
+        if j == 0:
+            axgrid[id1].set_title("Truth")
+            axgrid[id2].set_title("Mean")
+            axgrid[id3].set_title("Error")
+            axgrid[id4].set_title("Std. Dev.")
+
+        axgrid[id1].set_ylabel(f"$t={t[j_t]:.2f}$")
+    
+    figpred.savefig(os.path.join(traj_dir, "pred_vs_true.pdf"), format='pdf')
+    figpred.show()
+    plt.close(figpred)
+
+def plot_state_error(traj_dir, x_true, x_mean, x_std, dim_x, t):
+    fig, axs = plt.subplots(1, 4, figsize=(6.3, 3), layout='constrained')
+
+    x_lims = [0, 1]
+    t_lims = [t[0], t[-1]]
+
+    x_err = np.abs(x_true - x_mean)
+    state_max = np.round(max(np.max(x_true), np.max(x_mean))/2, decimals=1)*2
+    err_max = np.round(max(np.max(x_err), np.max(x_std))/2, decimals=2)*2
+    
+    # state
+    plot0 = axs[0].pcolorfast(x_lims, t_lims, x_true, cmap='coolwarm', vmin=0, vmax=state_max)
+    axs[0].set_title("True\nSolution")
+    
+    # prediction
+    plot1 = axs[1].pcolorfast(x_lims, t_lims, x_mean, cmap='coolwarm', vmin=0, vmax=state_max)
+    axs[1].set_title("Prediction\nMean")
+
+    # error
+    plot2 = axs[2].pcolorfast(x_lims, t_lims, x_err, cmap='afmhot', vmin=0, vmax=err_max)
+    axs[2].set_title("Absolute\nError")
+
+    # standard deviation
+    plot3 = axs[3].pcolorfast(x_lims, t_lims, x_std, cmap='afmhot', vmin=0, vmax=err_max)
+    axs[3].set_title("Prediction\nStd. Dev.")
+
+    for i in range(4):
+        if i == 0:
+            axs[i].set_ylabel(r"Time $t$")
+        else:
+            axs[i].set_yticklabels([])
+
+        axs[i].set_ylim(t_lims)
+        axs[i].set_yticks(np.linspace(t_lims[0], t_lims[1], 6))
+
+        axs[i].set_xlabel(r"$x$")
+        axs[i].set_xlim(x_lims)
+        axs[i].set_xticks(np.linspace(x_lims[0], x_lims[1], 3))
+
+    fig.colorbar(plot1, ax=axs[[0, 1]], ticks=[0, state_max/2, state_max], location='bottom')#, label=r"QoI $u$")
+    fig.colorbar(plot3, ax=axs[[2, 3]], ticks=[0, err_max/2, err_max], location='bottom')
+
+    #fig.tight_layout()
+
+    fig.savefig(os.path.join(traj_dir, "abs_error.pdf"), format='pdf')
+    fig.show()
+    plt.close(fig)
+
+def plot_error_dist(out_dir, rel_err, t_plot):
+    figerr, ax = plt.subplots(figsize=(6.3, 3))
+    n_t = t_plot.shape[0]
+
+    periods = [0, n_t//4, n_t//2, 3*n_t//4, n_t-1]
+
+    ax.plot(t_plot, np.mean(rel_err, axis=0))
+    #ax.errorbar(t_plot[periods], np.mean(rel_err, axis=0)[periods], yerr=np.std(rel_err, axis=0)[periods], fmt='o', capsize=5)
+    ax.boxplot(rel_err[:, periods], positions=t_plot[periods], showfliers=False)
+
+    ax.set_xticks(t_plot[periods])
+    ax.set_xlabel("Time")
+    #ax.set_xlim([t_plot[0]-0.1, t_plot[-1]+0.1])
+
+    #ax.set_yticks([0, 0.01, 0.02, 0.03, 0.04, 0.05])
+    ax.set_ylabel(r"$\|\bar{u}(t) - u(t)\|/\|u(t)\|$")
+    ax.set_ylim([0, np.max(rel_err[:, periods])*1.1])
+    
+    ax.grid()
+    figerr.tight_layout()
+    figerr.savefig(os.path.join(out_dir, f"{TRAIN_VAL_TEST}_err_dist.pdf"), format='pdf')
+    figerr.show()
+    plt.close(figerr)
+
+def main(data_file: str = "data_bcf_100_10_10_param.pkl", dim_z = 5):
+    data = load_data(data_file)
+    
+    mu = data[f"{TRAIN_VAL_TEST}_mu"].to(device)
+    t = data[f"{TRAIN_VAL_TEST}_t"].to(device)
+    x = data[f"{TRAIN_VAL_TEST}_x"].to(device)
+    f = data[f"{TRAIN_VAL_TEST}_f"].to(device)
+
+    shape_x = x.shape[2:]
+    dim_x = int(np.prod(shape_x))
+    n_traj = mu.shape[0]
+    n_win = 1
+    n_batch = 32
+    n_batch_decoder = 64
+    n_tsteps = t.shape[1]
+
+    rel_err = np.zeros((n_traj, n_tsteps))
+    aenc_rel_err = np.zeros((n_traj, n_tsteps))
+
+    version = "_".join([data_file.split(".")[0], str(dim_z), "1001", "50"])
+    ckpt_dir = os.path.join(CURR_DIR, "logs_pnsde", version, "checkpoints")
+    out_dir = os.path.join(CURR_DIR, "postproc_pnsde", version)
+
+    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    for file in os.listdir(ckpt_dir):
+        if file.endswith(".ckpt"):
+            ckpt_file = file
+    
+    pnsdeconfig = PNSDEConfig(lr=1e-3, lr_sched_freq=2000)
+    encoder, decoder = create_autoencoder(dim_z, n_win, data_file)
+    drift, dispersion = create_pnsde(dim_z, data_file)
+    model = TestPNSDE.load_from_checkpoint(os.path.join(ckpt_dir, ckpt_file),
+                                            config=pnsdeconfig,
+                                            encoder=encoder,
+                                            decoder=decoder,
+                                            drift=drift,
+                                            dispersion=dispersion,
+                                            ).to(device)
+    model.eval()
+
+    tsamples = [0, n_tsteps//4, n_tsteps//2, 3*n_tsteps//4, n_tsteps-1]
+    
+    # Initial state y0, the SDE is solved over the interval [ts[0], ts[-1]].
+    # zs will have shape (t_size, batch_size, dim_z)
+    for i_traj in range(n_traj):
+        traj_dir = os.path.join(out_dir, f"{TRAIN_VAL_TEST}_traj_{i_traj}")
+        pathlib.Path(traj_dir).mkdir(parents=True, exist_ok=True)
+
+        print(f"Integrating PNSDE for trajectory {TRAIN_VAL_TEST} {i_traj}...", flush=True, end="")
+
+        mu_i = mu[i_traj].unsqueeze(0)
+        mu_i_batch = mu_i.repeat((n_batch, 1))
+        t_i = t[i_traj]
+        x0_i = x[i_traj, :n_win, :].unsqueeze(0)
+        f_i = f[i_traj]
+
+        z0_i = model.encoder.sample(n_batch, mu_i, x0_i)
+        pnsde = visde.SDE(drift, dispersion, mu_i, t_i, f_i)
+        with torch.no_grad():
+            z_int = sdeint(pnsde, z0_i, t_i)
+        print("done", flush=True)
+
+        assert isinstance(z_int, Tensor), "zs is expected to be a single tensor"
+
+        z_enc = torch.zeros(n_tsteps, 1, dim_z).to(device)
+
+        x_true = x[i_traj]
+        x_mean = torch.zeros(n_tsteps, *shape_x).to(device)
+        x_std = torch.zeros(n_tsteps, *shape_x).to(device)
+
+        print("Decoding trajectory...", flush=True, end="")
+        for j_t in range(n_tsteps):
+            if j_t % 100 == 0:
+                print(f"{j_t}...", flush=True, end="")
+
+            with torch.no_grad():
+                x_mean[j_t] = model.decoder.sample(n_batch_decoder, mu_i_batch, z_int[j_t]).mean(0)
+
+                rel_err[i_traj, j_t] = ((x_mean[j_t] - x[i_traj, j_t]).pow(2).sum() / x[i_traj, j_t].pow(2).sum()).sqrt().item()
+
+                z_enc[j_t] = model.encoder.sample(1, mu_i, x[i_traj, j_t:(j_t+n_win)].unsqueeze(0))
+                x_rec_ij = model.decoder.sample(1, mu_i, z_enc[j_t])
+
+                aenc_rel_err[i_traj, j_t] = ((x_rec_ij - x[i_traj, j_t]).pow(2).sum() / x[i_traj, j_t].pow(2).sum()).sqrt().item()
+        print("done", flush=True)
+        
+        print(f"Mean relative error: {np.mean(rel_err[i_traj])}", flush=True)
+
+        #print(x_true.shape, x_mean.shape, x_std.shape, z_enc.shape, z_int.shape, sq_rel_err.shape, aenc_sq_rel_err.shape)
+
+        print("Plotting...", flush=True, end="")
+
+        plot_rms_rel_err(traj_dir,
+                        rel_err[i_traj],
+                        aenc_rel_err[i_traj])
+
+        plot_latent_state(traj_dir,
+                        z_enc.cpu().detach().numpy(),
+                        z_int.cpu().detach().numpy(),
+                        dim_z)
+
+        plot_pred_state(traj_dir,
+                        x_true.cpu().detach().numpy(),
+                        x_mean.cpu().detach().numpy(),
+                        x_std.cpu().detach().numpy(),
+                        dim_x,
+                        tsamples,
+                        t[i_traj].cpu().detach().numpy())
+        '''
+        plot_state_error(traj_dir,
+                        x_true.cpu().detach().numpy(),
+                        x_mean.cpu().detach().numpy(),
+                        x_std.cpu().detach().numpy(),
+                        dim_x,
+                        t[i_traj].cpu().detach().numpy())
+        '''
+        
+        print("done", flush=True)
+        print("---", flush=True)
+    
+    plot_error_dist(out_dir,
+                    rel_err,
+                    t[i_traj].cpu().detach().numpy())
+
+    print(f"Mean relative error: {np.mean(rel_err.flatten())}, Std Dev: {np.std(rel_err.flatten())}", flush=True)
+
+    np.set_printoptions(threshold=np.inf)
+    with open(os.path.join(out_dir, f"{TRAIN_VAL_TEST}_error.txt"), "w") as f:
+        f.write(np.array2string(rel_err, precision=5))
+        f.write("\n")
+        f.write(f"Mean: {np.mean(rel_err.flatten()):.5f}, Std Dev: {np.std(rel_err.flatten()):.5f}\n")
+    
+    print("All done!", flush=True)
+
+if __name__ == "__main__":
+    main()

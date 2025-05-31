@@ -1,0 +1,17 @@
+from experiments.forced_burgers_1d.pnode_myimp.train_pnode import main as train_pnode_main
+from experiments.forced_burgers_1d.pnode_myimp.postproc_pnode import main as postproc_pnode_main
+#from experiments.forced_burgers_1d.pnode_myimp.make_animation import main as make_animation_main
+import pathlib
+import sys
+
+OVERWRITE = False
+CURR_DIR = str(pathlib.Path(__file__).parent.absolute())
+
+if __name__ == "__main__":
+    hparams = {'data_file': "data_bcf_100_10_10_param.pkl",
+                'dim_z': 4}
+    print(hparams)
+
+    train_pnode_main(**hparams, overwrite=OVERWRITE)
+    postproc_pnode_main(**hparams)
+    #make_animation_main(**hparams)

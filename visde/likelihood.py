@@ -42,4 +42,4 @@ class LogLikeGaussian(nn.Module):
         sqnorm = x_diff.pow(2).div(x_var).sum(-1)
         loglike = -0.5 * (klog2pi + logdet + sqnorm)
 
-        return loglike / dim # kevin divided by dim
+        return loglike

@@ -5,7 +5,7 @@ PyTorch Lightning package for learning stochastic differential equations by vari
 """
 
 __version__ = "0.1.0"
-__author__ = "Andrew Francesco Ilersich, Kevin Course"
+__author__ = "Andrew Francesco Ilersich, Kevin Course, Prasanth B. Nair"
 
 from jaxtyping import install_import_hook
 

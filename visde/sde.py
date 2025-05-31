@@ -200,13 +200,14 @@ class LatentSDE(pl.LightningModule):
         assert torch.isfinite(drift_res), f"Drift residual is nan or inf: {drift_res.item()}"
         assert torch.isfinite(kl_div), f"KL divergence is nan or inf: {kl_div.item()}"
 
-        # normalization
+        # normalization, approximates ELBO / (n_totaldata * dim_x)
         n_batch = mu.shape[0]
         n_totaldata = self.config.n_totaldata
+        dim_x = x.view(n_batch, -1).shape[-1]
 
-        norm_log_like = log_like / n_batch
-        norm_drift_res = drift_res / n_totaldata
-        norm_kl_div = kl_div / n_totaldata
+        norm_log_like = log_like / (n_batch * dim_x)
+        norm_drift_res = drift_res / (n_batch * dim_x)
+        norm_kl_div = kl_div / (n_totaldata * dim_x)
 
         return norm_log_like, norm_drift_res, norm_kl_div
 

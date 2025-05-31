@@ -1,0 +1,2 @@
+model_checkpoint_path: "/trinity/home/andrew/repos/visde_dev/experiments/reaction_diffusion_2d/sindy_champion/examples/rd/model_noisy"
+all_model_checkpoint_paths: "/trinity/home/andrew/repos/visde_dev/experiments/reaction_diffusion_2d/sindy_champion/examples/rd/model_noisy"
