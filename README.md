@@ -1,6 +1,6 @@
 # Variational Inference for Stochastic Differential Equations (VISDE)
 
-PyTorch Lightning package for learning stochastic differential systems by variational inference. This package accompanies [this paper](https://blah.blah) by Andrew F. Ilersich, Kevin Course, and Prasanth B. Nair. The code for all test cases is provided in the `experiments` directory.
+PyTorch Lightning package for learning stochastic differential systems by variational inference. This package accompanies [this paper](https://royalsocietypublishing.org/rspa/article/482/2347/20251046/483624/Data-driven-stochastic-reduced-order-modelling-of) by Andrew F. Ilersich, Kevin Course, and Prasanth B. Nair. The code for all test cases is provided in the `experiments` directory.
 
 This package is based on the [arlatentsde](https://github.com/coursekevin/arlatentsde) package that accompanies [this paper](https://neurips.cc/virtual/2023/poster/72781) by Kevin Course and Prasanth B. Nair.
 
@@ -10,11 +10,22 @@ This package is based on the [arlatentsde](https://github.com/coursekevin/arlate
 
 If you find this work useful, please cite the following:
 
-Ilersich, Course, Nair. Paper coming soon.
+Andrew F. Ilersich, Kevin Course, Prasanth B. Nair; Data-driven stochastic reduced-order modelling of parametrized dynamical systems. Proc. R. Soc. A 1 October 2026; 482 (2347): 20251046. https://doi.org/10.1098/rspa.2025.1046
 
 ```
-@article{comingsoon,
-    title={Really cool paper that everyone will absolutely love}
+@article{10.1098/rspa.2025.1046,
+    author = {Ilersich, Andrew F. and Course, Kevin and Nair, Prasanth B.},
+    title = {Data-driven stochastic reduced-order modelling of parametrized dynamical systems},
+    journal = {Proceedings of the Royal Society A: Mathematical, Physical and Engineering Sciences},
+    volume = {482},
+    number = {2347},
+    pages = {20251046},
+    year = {2026},
+    month = {10},
+    issn = {1364-5021},
+    doi = {10.1098/rspa.2025.1046},
+    url = {https://doi.org/10.1098/rspa.2025.1046},
+    eprint = {https://royalsocietypublishing.org/rspa/article-pdf/doi/10.1098/rspa.2025.1046/6170287/rspa.2025.1046.pdf},
 }
 ```
 
